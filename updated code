@@ -1,0 +1,71 @@
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+import requests
+# Define states for conversation
+NAME, WORK_ORDER_TYPE, DESCRIPTION, DATE = range(4)
+# Start command
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    menu_keyboard = [
+        [KeyboardButton("Create Work Order")],
+        [KeyboardButton("Help"), KeyboardButton("Cancel")]
+    ]
+    reply_markup = ReplyKeyboardMarkup(menu_keyboard, one_time_keyboard=True)
+    await update.message.reply_text("Welcome! Please choose an option:", reply_markup=reply_markup)
+# Create work order process
+async def create_work_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Let's create a new work order.\nWhat is your name?", reply_markup=ReplyKeyboardRemove())
+    return NAME
+async def name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['name'] = update.message.text
+    await update.message.reply_text("What is the work order type?")
+    return WORK_ORDER_TYPE
+async def work_order_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['work_order_type'] = update.message.text
+    await update.message.reply_text("Provide a brief description of the work order.")
+    return DESCRIPTION
+async def description(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['description'] = update.message.text
+    await update.message.reply_text("When is the desired completion date? (YYYY-MM-DD)")
+    return DATE
+async def date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['date'] = update.message.text
+    await update.message.reply_text("Thank you! Creating your work order now.")
+    # Send data to the API
+    response = send_to_api(context.user_data)
+    if response.ok:
+        order_link = response.json().get('order_link')
+        await update.message.reply_text(f"Your work order has been created. You can view it [here]({order_link}).")
+    else:
+        await update.message.reply_text("There was an error creating your work order. Please try again.")
+    return ConversationHandler.END
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Help: Use the menu to create a work order or get assistance.")
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text('Form submission cancelled.', reply_markup=ReplyKeyboardRemove())
+    return ConversationHandler.END
+def send_to_api(data):
+    api_url = "https://maximo.eam360.com/maxrest/oslc/os/E3MSRUPDATE?lean=1&ignorecollectionref=1"
+    payload = {
+        'name': data['name'],
+        'work_order_type': data['work_order_type'],
+        'description': data['description'],
+        'date': data['date']
+    }
+    return requests.get(api_url, json=payload)
+if __name__ == '__main__':
+    print('starting bot')
+    app = Application.builder().token('7438518828:AAGYVJnftTMDtxuC5I8J181S7B5w_CGBDzc').build()
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex('^(Create Work Order)$'), create_work_order)],
+        states={
+            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, name)],
+            WORK_ORDER_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, work_order_type)],
+            DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, description)],
+            DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, date)],
+        },
+        fallbacks=[MessageHandler(filters.Regex('^(Cancel)$'), cancel)]
+    )
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('help', help_command))
+    app.add_handler(conv_handler)
+    app.run_polling(poll_interval=3)
